@@ -1,0 +1,463 @@
+# ============================================================
+# VISUAL PRODUCT SEARCH - MEMBER A FINAL INFERENCE PIPELINE
+# ------------------------------------------------------------
+# PURPOSE
+# ------------------------------------------------------------
+# Uses trained YOLO model to:
+#
+# 1. Detect upper/lower/full body clothing
+# 2. Keep highest-confidence bbox per class
+# 3. Generate clean cropped outputs
+# 4. Generate BLIP-ready annotation CSV
+# 5. Support frontend crop selection
+#
+# IMPORTANT:
+# - If class not detected -> leave CSV field empty
+# - No fake crops generated
+# - No retraining performed
+#
+# ============================================================
+
+# =========================
+# 1. INSTALL
+# =========================
+!pip -q install ultralytics
+
+# =========================
+# 2. IMPORTS
+# =========================
+import os
+import cv2
+import shutil
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+from tqdm import tqdm
+from ultralytics import YOLO
+
+# =========================
+# 3. PATHS
+# =========================
+DATA_ROOT = "/kaggle/input/datasets/hades199/vr-final-project-dataset/vr-final-project-dataset"
+
+IMG_ROOT = f"{DATA_ROOT}/Img"
+
+# trained model
+MODEL_PATH = "/kaggle/input/models/nipunv23/bestyolo/pytorch/default/1/best_deepfashion_yolo.pt"
+
+# if model already exists in working dir:
+# MODEL_PATH = "/kaggle/working/best_deepfashion_yolo.pt"
+
+# output root
+OUTPUT_ROOT = "/kaggle/working/memberA_outputs"
+
+# clean readable structure
+CROP_ROOT = f"{OUTPUT_ROOT}/cropped_products"
+
+UPPER_DIR = f"{CROP_ROOT}/upper_body"
+LOWER_DIR = f"{CROP_ROOT}/lower_body"
+FULL_DIR  = f"{CROP_ROOT}/full_body"
+
+VIS_ROOT  = f"{OUTPUT_ROOT}/visualizations"
+
+# metadata
+ANNOTATION_CSV = f"{OUTPUT_ROOT}/blip_input_annotations.csv"
+
+# create folders
+for p in [
+    OUTPUT_ROOT,
+    CROP_ROOT,
+    UPPER_DIR,
+    LOWER_DIR,
+    FULL_DIR,
+    VIS_ROOT
+]:
+    os.makedirs(p, exist_ok=True)
+
+# =========================
+# 4. LOAD MODEL
+# =========================
+print("Loading YOLO model...")
+
+model = YOLO(MODEL_PATH)
+
+print("Model loaded.")
+
+# =========================
+# 5. CLASS DEFINITIONS
+# =========================
+CLASS_NAMES = {
+    0: "upper_body",
+    1: "lower_body",
+    2: "full_body"
+}
+
+CLASS_DIRS = {
+    0: UPPER_DIR,
+    1: LOWER_DIR,
+    2: FULL_DIR
+}
+
+# =========================
+# 6. COLLECT IMAGE PATHS
+# =========================
+all_images = []
+
+for root, _, files in os.walk(IMG_ROOT):
+
+    for f in files:
+
+        if f.lower().endswith((".jpg", ".jpeg", ".png")):
+
+            full_path = os.path.join(root, f)
+
+            rel_path = os.path.relpath(
+                full_path,
+                IMG_ROOT
+            )
+
+            all_images.append(rel_path)
+
+print("Total images found:", len(all_images))
+
+# =========================
+# 7. MAIN INFERENCE LOOP
+# ============================================================
+# FOR EACH IMAGE:
+#
+# - Run YOLO
+# - Keep highest-confidence bbox per class
+# - Save crops separately
+# - Save metadata for BLIP/CLIP/frontend
+#
+# ============================================================
+metadata_rows = []
+
+CONF_THRESHOLD = 0.25
+
+for rel_path in tqdm(
+    all_images,
+    desc="Running YOLO inference"
+):
+
+    full_img_path = os.path.join(
+        IMG_ROOT,
+        rel_path
+    )
+
+    img = cv2.imread(full_img_path)
+
+    if img is None:
+        continue
+
+    # --------------------------------------------------------
+    # RUN YOLO
+    # --------------------------------------------------------
+    pred = model.predict(
+        source=img,
+        conf=CONF_THRESHOLD,
+        verbose=False,
+        device=0
+    )[0]
+
+    # initialize empty outputs
+    row = {
+        "original_image": rel_path,
+
+        "upper_body_crop": "",
+        "upper_body_confidence": "",
+
+        "lower_body_crop": "",
+        "lower_body_confidence": "",
+
+        "full_body_crop": "",
+        "full_body_confidence": ""
+    }
+
+    # no detections
+    if len(pred.boxes) == 0:
+
+        metadata_rows.append(row)
+        continue
+
+    # --------------------------------------------------------
+    # EXTRACT DETECTIONS
+    # --------------------------------------------------------
+    boxes   = pred.boxes.xyxy.cpu().numpy()
+    confs   = pred.boxes.conf.cpu().numpy()
+    classes = pred.boxes.cls.cpu().numpy().astype(int)
+
+    # --------------------------------------------------------
+    # KEEP BEST BOX PER CLASS
+    # --------------------------------------------------------
+    best_per_class = {}
+
+    for box, score, cls_id in zip(
+        boxes,
+        confs,
+        classes
+    ):
+
+        if cls_id not in best_per_class:
+
+            best_per_class[cls_id] = (
+                score,
+                box
+            )
+
+        else:
+
+            prev_score = best_per_class[cls_id][0]
+
+            if score > prev_score:
+
+                best_per_class[cls_id] = (
+                    score,
+                    box
+                )
+
+    # --------------------------------------------------------
+    # SAVE CROPS
+    # --------------------------------------------------------
+    for cls_id, (score, box) in best_per_class.items():
+
+        class_name = CLASS_NAMES[cls_id]
+
+        save_dir = CLASS_DIRS[cls_id]
+
+        x1, y1, x2, y2 = map(int, box)
+
+        x1 = max(0, x1)
+        y1 = max(0, y1)
+
+        x2 = min(img.shape[1], x2)
+        y2 = min(img.shape[0], y2)
+
+        crop = img[y1:y2, x1:x2]
+
+        if crop.size == 0:
+            continue
+
+        # clean filename
+        safe_name = rel_path.replace("/", "__")
+
+        crop_filename = (
+            f"{class_name}__"
+            f"{safe_name}"
+        )
+
+        crop_save_path = os.path.join(
+            save_dir,
+            crop_filename
+        )
+
+        # save crop
+        cv2.imwrite(
+            crop_save_path,
+            crop
+        )
+
+        # update metadata row
+        if cls_id == 0:
+
+            row["upper_body_crop"] = crop_save_path
+            row["upper_body_confidence"] = float(score)
+
+        elif cls_id == 1:
+
+            row["lower_body_crop"] = crop_save_path
+            row["lower_body_confidence"] = float(score)
+
+        elif cls_id == 2:
+
+            row["full_body_crop"] = crop_save_path
+            row["full_body_confidence"] = float(score)
+
+    metadata_rows.append(row)
+
+# =========================
+# 8. SAVE BLIP INPUT CSV
+# ============================================================
+# THIS CSV IS THE MAIN HANDOFF FILE
+#
+# MEMBER B USES THIS DIRECTLY
+#
+# Empty fields = class not detected
+#
+# ============================================================
+metadata_df = pd.DataFrame(metadata_rows)
+
+metadata_df.to_csv(
+    ANNOTATION_CSV,
+    index=False
+)
+
+print("\nSaved annotation CSV:")
+print(ANNOTATION_CSV)
+
+print("\nMetadata preview:")
+print(metadata_df.head())
+
+# =========================
+# 9. SAVE SAMPLE VISUALIZATIONS
+# ============================================================
+# Creates demo-friendly outputs
+#
+# Original image
+# + detected boxes
+#
+# ============================================================
+sample_vis_count = 20
+
+sample_paths = all_images[:sample_vis_count]
+
+for idx, rel_path in enumerate(sample_paths):
+
+    full_img_path = os.path.join(
+        IMG_ROOT,
+        rel_path
+    )
+
+    img = cv2.imread(full_img_path)
+
+    if img is None:
+        continue
+
+    pred = model.predict(
+        source=img,
+        conf=CONF_THRESHOLD,
+        verbose=False,
+        device=0
+    )[0]
+
+    vis_img = img.copy()
+
+    if len(pred.boxes) > 0:
+
+        boxes   = pred.boxes.xyxy.cpu().numpy()
+        confs   = pred.boxes.conf.cpu().numpy()
+        classes = pred.boxes.cls.cpu().numpy().astype(int)
+
+        for box, score, cls_id in zip(
+            boxes,
+            confs,
+            classes
+        ):
+
+            x1, y1, x2, y2 = map(int, box)
+
+            label = (
+                f"{CLASS_NAMES[cls_id]} "
+                f"{score:.2f}"
+            )
+
+            cv2.rectangle(
+                vis_img,
+                (x1, y1),
+                (x2, y2),
+                (0,255,0),
+                2
+            )
+
+            cv2.putText(
+                vis_img,
+                label,
+                (x1, max(0,y1-10)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0,255,0),
+                2
+            )
+
+    vis_save_path = os.path.join(
+        VIS_ROOT,
+        f"vis_{idx}.jpg"
+    )
+
+    cv2.imwrite(
+        vis_save_path,
+        vis_img
+    )
+
+print("\nSaved visualization samples:")
+print(VIS_ROOT)
+
+# =========================
+# 10. SHOW SAMPLE CROPS
+# =========================
+def show_samples(folder, title):
+
+    files = os.listdir(folder)[:6]
+
+    if len(files) == 0:
+        return
+
+    plt.figure(figsize=(12,6))
+
+    for i, f in enumerate(files, 1):
+
+        img = cv2.imread(
+            os.path.join(folder, f)
+        )
+
+        img = cv2.cvtColor(
+            img,
+            cv2.COLOR_BGR2RGB
+        )
+
+        plt.subplot(2,3,i)
+
+        plt.imshow(img)
+
+        plt.title(
+            f[:28],
+            fontsize=7
+        )
+
+        plt.axis("off")
+
+    plt.suptitle(title)
+
+    plt.tight_layout()
+
+    plt.show()
+
+show_samples(
+    UPPER_DIR,
+    "Upper Body Crops"
+)
+
+show_samples(
+    LOWER_DIR,
+    "Lower Body Crops"
+)
+
+show_samples(
+    FULL_DIR,
+    "Full Body Crops"
+)
+
+# =========================
+# 11. FINAL OUTPUT SUMMARY
+# =========================
+print("\n========================")
+print("FINAL MEMBER A OUTPUTS")
+print("========================")
+
+print("\n1. BLIP Annotation CSV")
+print(ANNOTATION_CSV)
+
+print("\n2. Upper Body Crops")
+print(UPPER_DIR)
+
+print("\n3. Lower Body Crops")
+print(LOWER_DIR)
+
+print("\n4. Full Body Crops")
+print(FULL_DIR)
+
+print("\n5. YOLO Visualization Samples")
+print(VIS_ROOT)
+
+print("\nPipeline completed successfully.")
