@@ -88,18 +88,26 @@ st.sidebar.markdown("### Model")
 st.sidebar.markdown("""
 - YOLOv8 Detection
 - CLIP ViT-B/32
-- FAISS Similarity Search
+- HNSW FAISS Retrieval
 - DeepFashion Dataset
 """)
 
 st.sidebar.markdown("---")
 
-st.sidebar.markdown("### Metrics")
+st.sidebar.markdown("### Evaluation Metrics")
 
 st.sidebar.markdown("""
-- Recall@5 : 76.7%
-- Recall@10 : 80.6%
-- Recall@15 : 83.3%
+- Recall@5 : 41.0%
+- Recall@10 : 46.4%
+- Recall@15 : 49.1%
+
+- mAP@5 : 11.6%
+- mAP@10 : 12.3%
+- mAP@15 : 12.6%
+
+- NDCG@5 : 18.8%
+- NDCG@10 : 18.7%
+- NDCG@15 : 19.2%
 """)
 
 # =========================================================
@@ -195,15 +203,21 @@ def load_data():
 embeddings, gallery_df, gallery_embeddings = load_data()
 
 # =========================================================
-# BUILD FAISS INDEX
+# BUILD HNSW FAISS INDEX
 # =========================================================
 
 @st.cache_resource
 def build_faiss_index(gallery_embeddings):
 
-    index = faiss.IndexFlatIP(
-        gallery_embeddings.shape[1]
+    dim = gallery_embeddings.shape[1]
+
+    index = faiss.IndexHNSWFlat(
+        dim,
+        32
     )
+
+    index.hnsw.efConstruction = 40
+    index.hnsw.efSearch = 16
 
     index.add(gallery_embeddings)
 
@@ -437,7 +451,7 @@ st.markdown(
     """
     <center>
     <span style='color:gray'>
-    Visual Retrieval using YOLO, CLIP embeddings and FAISS indexing
+    Visual Retrieval using YOLO, CLIP embeddings and HNSW-based FAISS indexing
     </span>
     </center>
     """,

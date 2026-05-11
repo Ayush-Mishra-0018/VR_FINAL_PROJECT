@@ -74,16 +74,22 @@ gallery_embeddings = gallery_embeddings.astype(
 )
 
 # =========================================================
-# BUILD FAISS INDEX
+# BUILD HNSW FAISS INDEX
 # =========================================================
 
-gallery_index = faiss.IndexFlatIP(
-    gallery_embeddings.shape[1]
+dim = gallery_embeddings.shape[1]
+
+gallery_index = faiss.IndexHNSWFlat(
+    dim,
+    32
 )
+
+gallery_index.hnsw.efConstruction = 40
+gallery_index.hnsw.efSearch = 16
 
 gallery_index.add(gallery_embeddings)
 
-print("FAISS Index Built")
+print("HNSW FAISS Index Built")
 
 # =========================================================
 # METRIC FUNCTIONS
@@ -209,9 +215,6 @@ for i in tqdm(range(len(query_df))):
     query_item_id = query_df.iloc[i][
         "item_id"
     ]
-
-    # IMPORTANT FIX:
-    # list instead of set
 
     relevant = list(
 
