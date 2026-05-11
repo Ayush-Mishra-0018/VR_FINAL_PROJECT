@@ -6,6 +6,7 @@ import faiss
 import torch
 import open_clip
 
+from ultralytics import YOLO
 from PIL import Image
 
 # =========================================================
@@ -85,15 +86,15 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("### Model")
 
 st.sidebar.markdown("""
-- ViT-B/32
-- 512-D Embeddings
+- YOLOv8 Detection
+- CLIP ViT-B/32
 - FAISS Similarity Search
 - DeepFashion Dataset
 """)
 
 st.sidebar.markdown("---")
 
-st.sidebar.markdown("### Evaluation")
+st.sidebar.markdown("### Metrics")
 
 st.sidebar.markdown("""
 - Recall@5 : 76.7%
@@ -138,6 +139,19 @@ def load_clip_model():
 model, preprocess, device = load_clip_model()
 
 # =========================================================
+# LOAD YOLO MODEL
+# =========================================================
+
+@st.cache_resource
+def load_yolo_model():
+
+    model = YOLO("yolov8n.pt")
+
+    return model
+
+yolo_model = load_yolo_model()
+
+# =========================================================
 # LOAD DATA
 # =========================================================
 
@@ -146,11 +160,17 @@ def load_data():
 
     embeddings = np.load("embeddings.npy")
 
-    metadata = pd.read_csv("metadata_with_embeddings.csv")
+    metadata = pd.read_csv(
+        "metadata_with_embeddings.csv"
+    )
 
     embeddings = embeddings.astype("float32")
 
-    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    norms = np.linalg.norm(
+        embeddings,
+        axis=1,
+        keepdims=True
+    )
 
     embeddings = embeddings / norms
 
@@ -158,11 +178,17 @@ def load_data():
         metadata["split"] == "gallery"
     ].reset_index(drop=True)
 
-    gallery_indices = gallery_df["embedding_index"].values
+    gallery_indices = gallery_df[
+        "embedding_index"
+    ].values
 
-    gallery_embeddings = embeddings[gallery_indices]
+    gallery_embeddings = embeddings[
+        gallery_indices
+    ]
 
-    gallery_embeddings = gallery_embeddings.astype("float32")
+    gallery_embeddings = gallery_embeddings.astype(
+        "float32"
+    )
 
     return embeddings, gallery_df, gallery_embeddings
 
@@ -175,16 +201,20 @@ embeddings, gallery_df, gallery_embeddings = load_data()
 @st.cache_resource
 def build_faiss_index(gallery_embeddings):
 
-    index = faiss.IndexFlatIP(gallery_embeddings.shape[1])
+    index = faiss.IndexFlatIP(
+        gallery_embeddings.shape[1]
+    )
 
     index.add(gallery_embeddings)
 
     return index
 
-gallery_index = build_faiss_index(gallery_embeddings)
+gallery_index = build_faiss_index(
+    gallery_embeddings
+)
 
 # =========================================================
-# IMAGE ENCODING
+# ENCODE IMAGE
 # =========================================================
 
 def encode_image(image):
@@ -206,6 +236,49 @@ def encode_image(image):
     return features
 
 # =========================================================
+# YOLO DETECTION + CROP
+# =========================================================
+
+def detect_and_crop(image):
+
+    results = yolo_model(image)
+
+    boxes = results[0].boxes
+
+    if len(boxes) == 0:
+        return image
+
+    largest_box = None
+    largest_area = 0
+
+    for box in boxes:
+
+        cls_id = int(box.cls[0])
+
+        # person class
+        if cls_id != 0:
+            continue
+
+        x1, y1, x2, y2 = box.xyxy[0]
+
+        area = (x2 - x1) * (y2 - y1)
+
+        if area > largest_area:
+
+            largest_area = area
+
+            largest_box = [x1, y1, x2, y2]
+
+    if largest_box is None:
+        return image
+
+    x1, y1, x2, y2 = map(int, largest_box)
+
+    cropped = image.crop((x1, y1, x2, y2))
+
+    return cropped
+
+# =========================================================
 # FILE UPLOAD
 # =========================================================
 
@@ -215,120 +288,144 @@ uploaded_file = st.file_uploader(
 )
 
 # =========================================================
-# RETRIEVAL
+# MAIN PIPELINE
 # =========================================================
 
 if uploaded_file is not None:
 
-    query_image = Image.open(uploaded_file).convert("RGB")
+    query_image = Image.open(
+        uploaded_file
+    ).convert("RGB")
 
-    col1, col2 = st.columns([1, 3])
+    st.markdown("## Uploaded Image")
 
-    with col1:
-
-        st.image(
-            query_image,
-            caption="Query Image",
-            use_container_width=True
-        )
-
-    with col2:
-
-        st.markdown("## Retrieving Similar Products...")
-
-        query_embedding = encode_image(query_image)
-
-        scores, indices = gallery_index.search(
-            query_embedding,
-            top_k * 5
-        )
-
-        st.success("Retrieval Complete")
+    st.image(
+        query_image,
+        width=300
+    )
 
     st.markdown("---")
 
-    st.markdown("## Retrieved Results")
+    st.markdown("## YOLO Detection Output")
 
-    cols = st.columns(top_k)
+    cropped_image = detect_and_crop(
+        query_image
+    )
 
-    valid_results = 0
+    st.image(
+        cropped_image,
+        width=300
+    )
 
-    for i, idx in enumerate(indices[0]):
+    confirm = st.button("Confirm Crop")
 
-        try:
+    # =====================================================
+    # RETRIEVAL
+    # =====================================================
 
-            original_path = gallery_df.iloc[idx]["image_path"]
+    if confirm:
 
-            filename = original_path.split("/")[-1]
+        with st.spinner(
+            "Retrieving similar products..."
+        ):
 
-            crop_class = gallery_df.iloc[idx]["crop_class"]
+            query_embedding = encode_image(
+                cropped_image
+            )
 
-            img_path = os.path.join(
-                "cropped_products",
-                crop_class,
-                filename
-)
+            scores, indices = gallery_index.search(
+                query_embedding,
+                top_k * 5
+            )
 
-            if not os.path.exists(img_path):
+        st.success("Retrieval Complete")
+
+        st.markdown("---")
+
+        st.markdown("## Retrieved Results")
+
+        cols = st.columns(top_k)
+
+        valid_results = 0
+
+        for i, idx in enumerate(indices[0]):
+
+            try:
+
+                original_path = gallery_df.iloc[idx][
+                    "image_path"
+                ]
+
+                filename = original_path.split("/")[-1]
+
+                crop_class = gallery_df.iloc[idx][
+                    "crop_class"
+                ]
+
+                img_path = os.path.join(
+                    "cropped_products",
+                    crop_class,
+                    filename
+                )
+
+                if not os.path.exists(img_path):
+                    continue
+
+                item_id = gallery_df.iloc[idx][
+                    "item_id"
+                ]
+
+                caption = gallery_df.iloc[idx][
+                    "caption"
+                ]
+
+                similarity = scores[0][i]
+
+                retrieved_img = Image.open(
+                    img_path
+                )
+
+                with cols[valid_results]:
+
+                    st.image(
+                        retrieved_img,
+                        use_container_width=True
+                    )
+
+                    st.markdown(
+                        f"### #{valid_results + 1}"
+                    )
+
+                    st.progress(float(similarity))
+
+                    st.markdown(
+                        f"<div class='similarity-text'>Similarity: {similarity:.4f}</div>",
+                        unsafe_allow_html=True
+                    )
+
+                    st.markdown(
+                        f"<div class='caption-text'><b>Item ID:</b> {item_id}</div>",
+                        unsafe_allow_html=True
+                    )
+
+                    st.markdown(
+                        f"<div class='caption-text'>{caption}</div>",
+                        unsafe_allow_html=True
+                    )
+
+                valid_results += 1
+
+                if valid_results >= top_k:
+                    break
+
+            except:
                 continue
 
-            item_id = gallery_df.iloc[idx]["item_id"]
+        if valid_results == 0:
 
-            caption = gallery_df.iloc[idx]["caption"]
-
-            similarity = scores[0][i]
-
-            retrieved_img = Image.open(img_path)
-
-            with cols[valid_results]:
-
-                st.image(
-                    retrieved_img,
-                    use_container_width=True
-                )
-
-                st.markdown(
-                    f"<div class='result-box'>",
-                    unsafe_allow_html=True
-                )
-
-                st.markdown(
-                    f"### #{valid_results + 1}"
-                )
-
-                st.markdown(
-                    f"<div class='similarity-text'>Similarity: {similarity:.4f}</div>",
-                    unsafe_allow_html=True
-                )
-
-                st.markdown(
-                    f"<div class='caption-text'><b>Item ID:</b> {item_id}</div>",
-                    unsafe_allow_html=True
-                )
-
-                st.markdown(
-                    f"<div class='caption-text'>{caption}</div>",
-                    unsafe_allow_html=True
-                )
-
-                st.markdown(
-                    "</div>",
-                    unsafe_allow_html=True
-                )
-
-            valid_results += 1
-
-            if valid_results >= top_k:
-                break
-
-        except:
-            continue
-
-    if valid_results == 0:
-
-        st.warning(
-            "No matching images could be displayed."
-        )
+            st.warning(
+                "No matching images could be displayed."
+            )
 
 # =========================================================
 # FOOTER
@@ -340,7 +437,7 @@ st.markdown(
     """
     <center>
     <span style='color:gray'>
-    Visual Retrieval using CLIP embeddings and FAISS indexing
+    Visual Retrieval using YOLO, CLIP embeddings and FAISS indexing
     </span>
     </center>
     """,
