@@ -1,0 +1,376 @@
+# ============================================================
+# VISUAL PRODUCT SEARCH - MEMBER A (FULL UPDATED VERSION)
+# DeepFashion -> YOLOv8 Transfer Learning -> Metrics -> Save Model -> Crop Outputs
+# Kaggle T4x2 GPU Ready
+# ============================================================
+
+# =========================
+# 1. INSTALL
+# =========================
+!pip -q install ultralytics
+
+# =========================
+# 2. IMPORTS
+# =========================
+import os
+import cv2
+import yaml
+import torch
+import shutil
+import random
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+from tqdm import tqdm
+from pathlib import Path
+from sklearn.model_selection import train_test_split
+from ultralytics import YOLO
+
+# =========================
+# 3. PATHS
+# =========================
+DATA_ROOT = "/kaggle/input/datasets/hades199/vr-final-project-dataset/vr-final-project-dataset"
+BBOX_FILE = f"{DATA_ROOT}/Anno/list_bbox_inshop.txt"
+IMG_ROOT  = f"{DATA_ROOT}/Img"
+
+WORK_DIR  = "/kaggle/working/deepfashion_yolo"
+RUN_NAME  = "deepfashion_yolo_train"
+RUN_DIR   = f"/kaggle/working/{RUN_NAME}"
+
+IMG_TRAIN = f"{WORK_DIR}/images/train"
+IMG_VAL   = f"{WORK_DIR}/images/val"
+LBL_TRAIN = f"{WORK_DIR}/labels/train"
+LBL_VAL   = f"{WORK_DIR}/labels/val"
+
+CROP_DIR  = "/kaggle/working/cropped_products"
+
+for p in [IMG_TRAIN, IMG_VAL, LBL_TRAIN, LBL_VAL, CROP_DIR]:
+    os.makedirs(p, exist_ok=True)
+
+# =========================
+# 4. SEED
+# =========================
+SEED = 42
+random.seed(SEED)
+np.random.seed(SEED)
+torch.manual_seed(SEED)
+
+# =========================
+# 5. PARSE BBOX FILE
+# =========================
+def parse_bbox(txt_path):
+    rows = []
+
+    with open(txt_path, "r") as f:
+        lines = f.readlines()[2:]   # skip header lines
+
+    for line in tqdm(lines, desc="Parsing annotations"):
+        line = line.strip()
+        if not line:
+            continue
+
+        parts = line.split()
+
+        img_rel = parts[0]
+        cls_raw = int(parts[1])   # 1,2,3
+        pose    = int(parts[2])
+        x1, y1, x2, y2 = map(int, parts[3:7])
+
+        rows.append([img_rel, cls_raw, pose, x1, y1, x2, y2])
+
+    df = pd.DataFrame(rows, columns=[
+        "image_rel", "class_raw", "pose", "x1", "y1", "x2", "y2"
+    ])
+    return df
+
+df = parse_bbox(BBOX_FILE)
+
+# raw classes: 1 upper, 2 lower, 3 full
+df["class_id"] = df["class_raw"] - 1
+
+# clean invalid boxes
+df = df[(df["x2"] > df["x1"]) & (df["y2"] > df["y1"])].copy()
+
+print("Total valid rows:", len(df))
+print(df.head())
+
+# =========================
+# 6. TRAIN / VAL SPLIT
+# =========================
+train_df, val_df = train_test_split(
+    df,
+    test_size=0.10,
+    random_state=SEED,
+    stratify=df["class_id"]
+)
+
+print("Train:", len(train_df))
+print("Val:", len(val_df))
+
+# =========================
+# 7. BOX CONVERSION
+# =========================
+def xyxy_to_yolo(x1, y1, x2, y2, w, h):
+    xc = ((x1 + x2) / 2) / w
+    yc = ((y1 + y2) / 2) / h
+    bw = (x2 - x1) / w
+    bh = (y2 - y1) / h
+    return xc, yc, bw, bh
+
+# =========================
+# 8. BUILD YOLO DATASET
+# =========================
+def build_split(split_df, img_dir, lbl_dir):
+    skipped = 0
+
+    for _, row in tqdm(split_df.iterrows(), total=len(split_df), desc=f"Creating {img_dir}"):
+
+        rel = row["image_rel"]
+        src = os.path.join(IMG_ROOT, rel)
+
+        if not os.path.exists(src):
+            skipped += 1
+            continue
+
+        img = cv2.imread(src)
+        if img is None:
+            skipped += 1
+            continue
+
+        h, w = img.shape[:2]
+
+        x1, y1, x2, y2 = int(row["x1"]), int(row["y1"]), int(row["x2"]), int(row["y2"])
+        cls_id = int(row["class_id"])
+
+        xc, yc, bw, bh = xyxy_to_yolo(x1, y1, x2, y2, w, h)
+
+        safe_name = rel.replace("/", "__")
+        img_dst = os.path.join(img_dir, safe_name)
+        lbl_dst = os.path.join(lbl_dir, Path(safe_name).stem + ".txt")
+
+        shutil.copy(src, img_dst)
+
+        with open(lbl_dst, "w") as f:
+            f.write(f"{cls_id} {xc:.6f} {yc:.6f} {bw:.6f} {bh:.6f}\n")
+
+    print("Skipped:", skipped)
+
+build_split(train_df, IMG_TRAIN, LBL_TRAIN)
+build_split(val_df, IMG_VAL, LBL_VAL)
+
+# =========================
+# 9. CREATE YAML
+# =========================
+yaml_path = f"{WORK_DIR}/data.yaml"
+
+data_yaml = {
+    "path": WORK_DIR,
+    "train": "images/train",
+    "val": "images/val",
+    "names": {
+        0: "upper_body",
+        1: "lower_body",
+        2: "full_body"
+    }
+}
+
+with open(yaml_path, "w") as f:
+    yaml.dump(data_yaml, f)
+
+print("Saved:", yaml_path)
+
+# =========================
+# 10. TRAIN YOLOv8
+# =========================
+model = YOLO("yolov8n.pt")   # use yolov8s.pt if stronger model desired
+
+results = model.train(
+    data=yaml_path,
+    epochs=20,
+    imgsz=256,
+    batch=64,
+    device=[0,1],         # Kaggle dual T4
+    workers=8,
+    optimizer="AdamW",
+    lr0=1e-3,
+    patience=5,
+    pretrained=True,
+    project="/kaggle/working",
+    name=RUN_NAME,
+    exist_ok=True,
+    verbose=True
+)
+
+# =========================
+# 11. LOAD BEST MODEL
+# =========================
+BEST_PT = f"{RUN_DIR}/weights/best.pt"
+LAST_PT = f"{RUN_DIR}/weights/last.pt"
+
+print("Best exists:", os.path.exists(BEST_PT))
+print("Last exists:", os.path.exists(LAST_PT))
+
+best_model = YOLO(BEST_PT)
+
+# =========================
+# 12. VALIDATION METRICS
+# =========================
+metrics = best_model.val(
+    data=yaml_path,
+    imgsz=256,
+    batch=64,
+    device=0,
+    verbose=True
+)
+
+map50 = float(metrics.box.map50)
+map95 = float(metrics.box.map)
+prec  = float(metrics.box.mp)
+rec   = float(metrics.box.mr)
+
+print("\n========================")
+print("FINAL METRICS")
+print("========================")
+print("mAP50      :", map50)
+print("mAP50-95   :", map95)
+print("Precision  :", prec)
+print("Recall     :", rec)
+
+# save metrics csv
+metrics_df = pd.DataFrame([{
+    "mAP50": map50,
+    "mAP50_95": map95,
+    "Precision": prec,
+    "Recall": rec
+}])
+
+metrics_csv = "/kaggle/working/final_metrics.csv"
+metrics_df.to_csv(metrics_csv, index=False)
+
+# =========================
+# 13. EXPLICIT SAVE MODEL (FIXED)
+# =========================
+import os
+import shutil
+
+BEST_PT = f"{RUN_DIR}/weights/best.pt"
+LAST_PT = f"{RUN_DIR}/weights/last.pt"
+
+# Copy best model to easy-access path
+FINAL_BEST = "/kaggle/working/best_deepfashion_yolo.pt"
+
+if os.path.exists(BEST_PT):
+    shutil.copy2(BEST_PT, FINAL_BEST)
+    print("Best model copied to:", FINAL_BEST)
+else:
+    print("ERROR: best.pt not found")
+
+# Optional backup copy of last epoch model
+FINAL_LAST = "/kaggle/working/last_deepfashion_yolo.pt"
+if os.path.exists(LAST_PT):
+    shutil.copy2(LAST_PT, FINAL_LAST)
+    print("Last model copied to:", FINAL_LAST)
+
+# List files
+print("\nSaved files in /kaggle/working:")
+for f in os.listdir("/kaggle/working"):
+    if f.endswith(".pt") or f.endswith(".csv"):
+        print("-", f)
+
+# =========================
+# 14. CROP ALL PRODUCTS
+# =========================
+all_images = list(df["image_rel"].unique())
+
+def crop_all(model, rel_paths, save_dir, conf=0.25):
+    os.makedirs(save_dir, exist_ok=True)
+
+    for rel in tqdm(rel_paths, desc="Cropping products"):
+        src = os.path.join(IMG_ROOT, rel)
+
+        if not os.path.exists(src):
+            continue
+
+        img = cv2.imread(src)
+        if img is None:
+            continue
+
+        pred = model.predict(
+            source=img,
+            conf=conf,
+            verbose=False,
+            device=0
+        )[0]
+
+        if len(pred.boxes) == 0:
+            continue
+
+        confs = pred.boxes.conf.cpu().numpy()
+        idx = int(np.argmax(confs))
+
+        box = pred.boxes.xyxy.cpu().numpy()[idx]
+        x1, y1, x2, y2 = map(int, box)
+
+        x1 = max(0, x1)
+        y1 = max(0, y1)
+        x2 = min(img.shape[1], x2)
+        y2 = min(img.shape[0], y2)
+
+        crop = img[y1:y2, x1:x2]
+        if crop.size == 0:
+            continue
+
+        name = rel.replace("/", "__")
+        save_path = os.path.join(save_dir, name)
+        cv2.imwrite(save_path, crop)
+
+crop_all(best_model, all_images, CROP_DIR)
+
+# =========================
+# 15. SHOW SAMPLE CROPS
+# =========================
+files = os.listdir(CROP_DIR)[:9]
+
+plt.figure(figsize=(12,12))
+for i, f in enumerate(files, 1):
+    img = cv2.imread(os.path.join(CROP_DIR, f))
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+    plt.subplot(3,3,i)
+    plt.imshow(img)
+    plt.title(f[:28], fontsize=8)
+    plt.axis("off")
+
+plt.tight_layout()
+plt.show()
+
+# =========================
+# 16. SHOW TRAINING GRAPHS IF AVAILABLE
+# =========================
+for img_path in [
+    f"{RUN_DIR}/results.png",
+    f"{RUN_DIR}/confusion_matrix.png"
+]:
+    if os.path.exists(img_path):
+        img = cv2.imread(img_path)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+        plt.figure(figsize=(12,8))
+        plt.imshow(img)
+        plt.title(Path(img_path).name)
+        plt.axis("off")
+        plt.show()
+
+# =========================
+# 17. FINAL OUTPUT SUMMARY
+# =========================
+print("\n========================")
+print("OUTPUT FILES")
+print("========================")
+print("YOLO Dataset        :", WORK_DIR)
+print("Training Run Folder :", RUN_DIR)
+print("Best Model          :", FINAL_BEST)
+print("Torch Save Model    : /kaggle/working/best_deepfashion_yolo_torchsave.pt")
+print("Metrics CSV         :", metrics_csv)
+print("Cropped Images      :", CROP_DIR)
