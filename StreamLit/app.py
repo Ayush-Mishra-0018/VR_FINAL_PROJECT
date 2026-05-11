@@ -14,7 +14,7 @@ from PIL import Image, ImageEnhance
 # =========================================================
 
 st.set_page_config(
-    page_title="VISAGE · Fashion Retrieval",
+    page_title="VR_Project · Fashion Retrieval",
     page_icon="✦",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -63,7 +63,7 @@ footer { visibility: hidden; }
 
 .hero-eyebrow {
     font-family: 'Josefin Sans', sans-serif;
-    font-size: 0.68rem;
+    font-size: 0.78rem;
     font-weight: 600;
     letter-spacing: 0.28em;
     text-transform: uppercase;
@@ -96,11 +96,11 @@ footer { visibility: hidden; }
 
 .hero-subtitle {
     font-family: 'Josefin Sans', sans-serif;
-    font-size: 0.72rem;
+    font-size: 0.78rem;
     font-weight: 300;
     letter-spacing: 0.2em;
     text-transform: uppercase;
-    color: #3A3A42;
+    color: #6A6A7A;
     margin-top: 1rem;
 }
 
@@ -120,7 +120,7 @@ footer { visibility: hidden; }
 
 .sb-section-title {
     font-family: 'Josefin Sans', sans-serif;
-    font-size: 0.6rem;
+    font-size: 0.68rem;
     font-weight: 600;
     letter-spacing: 0.25em;
     text-transform: uppercase;
@@ -148,14 +148,14 @@ footer { visibility: hidden; }
 
 .metric-label {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 0.65rem;
-    color: #38384A;
+    font-size: 0.72rem;
+    color: #6A6A80;
     letter-spacing: 0.05em;
 }
 
 .metric-value {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 0.72rem;
+    font-size: 0.78rem;
     color: #C4A880;
 }
 
@@ -180,8 +180,8 @@ footer { visibility: hidden; }
 
 .model-chip-text {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 0.65rem;
-    color: #5A5A70;
+    font-size: 0.72rem;
+    color: #7A7A90;
     letter-spacing: 0.03em;
 }
 
@@ -221,18 +221,18 @@ footer { visibility: hidden; }
 
 .step-label {
     font-family: 'Josefin Sans', sans-serif;
-    font-size: 0.55rem;
+    font-size: 0.65rem;
     font-weight: 600;
     letter-spacing: 0.15em;
     text-transform: uppercase;
-    color: #2E2E40;
+    color: #5A5A72;
     margin-top: 3px;
 }
 
 /* ── Panel ── */
 .panel-title {
     font-family: 'Josefin Sans', sans-serif;
-    font-size: 0.6rem;
+    font-size: 0.68rem;
     font-weight: 600;
     letter-spacing: 0.22em;
     text-transform: uppercase;
@@ -266,10 +266,10 @@ footer { visibility: hidden; }
 
 .badge-key {
     font-family: 'Josefin Sans', sans-serif;
-    font-size: 0.58rem;
+    font-size: 0.65rem;
     letter-spacing: 0.15em;
     text-transform: uppercase;
-    color: #38384A;
+    color: #5A5A72;
     margin-bottom: 3px;
 }
 
@@ -309,13 +309,13 @@ footer { visibility: hidden; }
     padding: 10px 14px;
     margin: 10px 0;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 0.7rem;
+    font-size: 0.78rem;
     line-height: 1.7;
 }
 
-.banner.info    { background:#0D1620; border:1px solid #192840; color:#5A8AAA; border-left:2px solid #4A90C4; }
-.banner.warn    { background:#1A1608; border:1px solid #342C10; color:#9A7A30; border-left:2px solid #C4A030; }
-.banner.success { background:#0C1810; border:1px solid #182818; color:#4A9A70; border-left:2px solid #5ABD8A; }
+.banner.info    { background:#0D1620; border:1px solid #192840; color:#7AAACC; border-left:2px solid #4A90C4; }
+.banner.warn    { background:#1A1608; border:1px solid #342C10; color:#BF9A50; border-left:2px solid #C4A030; }
+.banner.success { background:#0C1810; border:1px solid #182818; color:#6ABD90; border-left:2px solid #5ABD8A; }
 
 /* ── Divider ── */
 .divider-label {
@@ -334,10 +334,10 @@ footer { visibility: hidden; }
 
 .divider-label span {
     font-family: 'Josefin Sans', sans-serif;
-    font-size: 0.58rem;
+    font-size: 0.65rem;
     letter-spacing: 0.25em;
     text-transform: uppercase;
-    color: #2E2E3A;
+    color: #4E4E60;
     white-space: nowrap;
 }
 
@@ -366,10 +366,10 @@ footer { visibility: hidden; }
 
 .result-score-label {
     font-family: 'Josefin Sans', sans-serif;
-    font-size: 0.55rem;
+    font-size: 0.62rem;
     letter-spacing: 0.18em;
     text-transform: uppercase;
-    color: #2E2E40;
+    color: #5A5A72;
 }
 
 .sim-track {
@@ -389,17 +389,17 @@ footer { visibility: hidden; }
 
 .result-id {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 0.62rem;
-    color: #2E2E40;
+    font-size: 0.65rem;
+    color: #5A5A72;
     letter-spacing: 0.04em;
     margin-bottom: 4px;
 }
 
 .result-caption {
     font-family: 'Josefin Sans', sans-serif;
-    font-size: 0.72rem;
+    font-size: 0.78rem;
     font-weight: 300;
-    color: #5A5A70;
+    color: #7A7A90;
     line-height: 1.5;
 }
 
@@ -421,8 +421,8 @@ footer { visibility: hidden; }
 
 .results-count {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 0.7rem;
-    color: #2E2E40;
+    font-size: 0.75rem;
+    color: #5A5A72;
     letter-spacing: 0.08em;
 }
 
@@ -451,9 +451,9 @@ footer { visibility: hidden; }
 /* ── Widgets ── */
 label, .stRadio label, .stCheckbox label {
     font-family: 'Josefin Sans', sans-serif !important;
-    font-size: 0.72rem !important;
+    font-size: 0.80rem !important;
     letter-spacing: 0.1em !important;
-    color: #5A5A70 !important;
+    color: #7A7A90 !important;
 }
 
 [data-testid="stSlider"] [role="slider"] {
@@ -464,8 +464,8 @@ label, .stRadio label, .stCheckbox label {
 /* ── Footer ── */
 .footer-text {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 0.58rem;
-    color: #1E1E28;
+    font-size: 0.65rem;
+    color: #3A3A4A;
     letter-spacing: 0.15em;
     text-align: center;
     padding-top: 2rem;
@@ -506,7 +506,7 @@ button[kind="header"] {
 # =========================================================
 
 with st.sidebar:
-    st.markdown('<div class="sb-logo">VIS<span>AGE</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="sb-logo">VR_<span>PROJECT</span></div>', unsafe_allow_html=True)
 
     st.markdown('<div class="sb-section-title">Results</div>', unsafe_allow_html=True)
     top_k = st.slider("Top K", min_value=1, max_value=10, value=5, label_visibility="collapsed")
@@ -949,7 +949,7 @@ if uploaded_file is not None:
 
 st.markdown("""
 <div class="footer-text">
-    VISAGE &nbsp;·&nbsp; YOLO &nbsp;·&nbsp; CLIP ViT-B/32 &nbsp;·&nbsp;
+    VR_Project &nbsp;·&nbsp; YOLO &nbsp;·&nbsp; CLIP ViT-B/32 &nbsp;·&nbsp;
     HNSW FAISS &nbsp;·&nbsp; MULTI-CROP FUSION &nbsp;·&nbsp; COSINE RERANKING
 </div>
 """, unsafe_allow_html=True)
