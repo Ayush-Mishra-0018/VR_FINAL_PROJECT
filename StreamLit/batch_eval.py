@@ -1,7 +1,11 @@
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["OMP_NUM_THREADS"] = "1"
+
+import torch
+import faiss
 import numpy as np
 import pandas as pd
-import faiss
-import torch
 import open_clip
 
 from tqdm import tqdm

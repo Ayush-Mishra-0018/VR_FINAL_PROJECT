@@ -1,11 +1,13 @@
 import os
-import streamlit as st
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["OMP_NUM_THREADS"] = "1"
+
+import torch
+import faiss
 import numpy as np
 import pandas as pd
-import faiss
-import torch
+import streamlit as st
 import open_clip
-
 from ultralytics import YOLO
 from PIL import Image, ImageEnhance
 
@@ -781,7 +783,7 @@ if uploaded_file is not None:
 
     with col_q:
         st.markdown('<div class="panel-title">Query Image</div>', unsafe_allow_html=True)
-        st.image(query_image, use_container_width=True)
+        st.image(query_image, width="stretch")
 
     with col_p:
         st.markdown('<div class="panel-title">Active Pipeline</div>', unsafe_allow_html=True)
@@ -832,7 +834,7 @@ if uploaded_file is not None:
             f'</div>',
             unsafe_allow_html=True
         )
-        st.image(cropped_image, use_container_width=True)
+        st.image(cropped_image, width="stretch")
 
     with col_c2:
         st.markdown('<div class="panel-title">Detection Info</div>', unsafe_allow_html=True)
@@ -911,7 +913,7 @@ if uploaded_file is not None:
                 sim_pct = int(min(max(float(similarity), 0.0), 1.0) * 100)
 
                 with cols[valid_results]:
-                    st.image(retrieved_img, use_container_width=True)
+                    st.image(retrieved_img, width="stretch")
                     st.markdown(f"""
                     <div class="result-body">
                         <div class="result-score-row">
