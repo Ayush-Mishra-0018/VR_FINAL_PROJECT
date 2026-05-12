@@ -545,7 +545,7 @@ def load_fashion_yolo():
 
 @st.cache_data
 def load_data():
-    embs = np.load("embeddings.npy").astype("float32")
+    embs = np.load("embeddingsC7.npy").astype("float32")
     embs /= np.linalg.norm(embs, axis=1, keepdims=True)
     meta = pd.read_csv("metadata_with_embeddings.csv")
     gdf  = meta[meta["split"] == "gallery"].reset_index(drop=True)
