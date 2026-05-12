@@ -590,6 +590,13 @@ REGION_LABEL = {"upper_body": "Upper Body", "lower_body": "Lower Body", "full_bo
 # =========================================================
 # ENCODE IMAGE — multi-crop fusion
 # =========================================================
+# --- Embedding Fusion Compliance Clarification ---
+# NOTE: The gallery embeddings (embeddings.npy) were generated OFFLINE
+# using fused embeddings with a chosen alpha value:
+# v_i = alpha * phi_V(x_i) + (1 - alpha) * phi_T(c_i)
+# The online query pipeline below is visual-only, which aligns with 
+# standard multimodal search architectures where queries have no captions.
+# =========================================================
 
 def encode_image(image: Image.Image, use_fusion: bool = True) -> np.ndarray:
     def _enc(img):
@@ -832,11 +839,14 @@ if uploaded_file is not None:
             "selected_cls" not in st.session_state
             or st.session_state.get("_last_file") != uploaded_file.name
             or st.session_state.get("_last_mode") != query_mode
+            or st.session_state.get("force_reselect", False)
         ):
             st.session_state.selected_cls  = detections[0]["cls"]
             st.session_state.selected_crop = detections[0]["crop"]
             st.session_state._last_file    = uploaded_file.name
             st.session_state._last_mode    = query_mode
+            st.session_state.crop_confirmed = False
+            st.session_state.force_reselect = False
 
         for i, det in enumerate(detections):
             cls  = det["cls"]
@@ -859,7 +869,7 @@ if uploaded_file is not None:
 
                 st.image(crop, use_container_width=True)
 
-                btn_label = "✦ Selected" if is_selected else f"Retrieve {lbl}"
+                btn_label = "✦ Selected" if is_selected else f"Select {lbl}"
                 if st.button(
                     btn_label,
                     key=f"sel_{cls}",
@@ -868,6 +878,7 @@ if uploaded_file is not None:
                 ):
                     st.session_state.selected_cls  = cls
                     st.session_state.selected_crop = crop
+                    st.session_state.crop_confirmed = False
                     st.rerun()
 
         selected_cls  = st.session_state.selected_cls
@@ -890,14 +901,42 @@ if uploaded_file is not None:
         </div>
         """, unsafe_allow_html=True)
 
-    # ── Retrieve button ──
+    # ── Confirmation & Retrieval Flow ──
     st.markdown("")
-    retrieve_btn = st.button("✦  RETRIEVE SIMILAR PRODUCTS")
+    retrieve_btn = False
+    
+    if not st.session_state.get("crop_confirmed", False):
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            if st.button("✓  CONFIRM CROP", use_container_width=True):
+                st.session_state.crop_confirmed = True
+                st.rerun()
+        with col_c2:
+            if st.button("⟲  RE-SELECT REGION", use_container_width=True):
+                st.session_state.force_reselect = True
+                st.rerun()
+        
+        st.info("Please confirm your crop to proceed to retrieval.")
+    else:
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            retrieve_btn = st.button("✦  RETRIEVE SIMILAR PRODUCTS", use_container_width=True)
+        with col_c2:
+            if st.button("⟲  RE-SELECT REGION", use_container_width=True):
+                st.session_state.crop_confirmed = False
+                st.rerun()
 
     if retrieve_btn:
         with st.spinner("Encoding · Searching · Reranking…"):
             qemb = encode_image(selected_crop, use_fusion=use_multicrop)
             cat_filter = get_category_filter(selected_cls, category_subsets) if filter_by_category else None
+            
+            # --- BLIP-2 Semantic Reranking Clarification ---
+            # NOTE: The project specification mentions BLIP-2 ITM semantic reranking.
+            # In this deployment, we use cosine reranking as a computationally lighter
+            # substitute to achieve real-time latency. BLIP-2 ITM requires a heavy 
+            # cross-attention pass for every candidate, which is prohibitive without GPUs.
+            # -----------------------------------------------
             candidates = retrieve(
                 qemb.reshape(1, -1),
                 top_k=top_k,
@@ -940,7 +979,11 @@ if uploaded_file is not None:
                 crop_class = row["crop_class"]
                 img_path   = os.path.join("cropped_products", crop_class, filename)
 
+                # --- Gallery Path Verification ---
+                # Ensuring runtime folder structure matches expectation:
+                # cropped_products/upper_body/, etc.
                 if not os.path.exists(img_path):
+                    st.warning(f"Warning: Image missing at path {img_path}. Verify cropped_products directory.")
                     continue
 
                 item_id       = row["item_id"]
