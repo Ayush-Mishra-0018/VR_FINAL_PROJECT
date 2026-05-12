@@ -373,7 +373,7 @@ with st.sidebar:
 
     # Map sidebar label → YOLO class name used by best_deepfashion_yolo.pt
     MODE_CLASS = {
-        "Auto":        None,           # pick best detection of any class
+        "Auto":        None,
         "Upper Body":  "upper_body",
         "Lower Body":  "lower_body",
         "Full Body":   "full_body",
@@ -441,20 +441,107 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =========================================================
+# CLIP CHECKPOINT LOADER  (shared helper — also used by batch_eval.py)
+# =========================================================
+
+FINETUNED_CKPT = "best_clip_model.pt"
+
+
+def _extract_state_dict(raw: dict) -> dict:
+    """
+    Unwrap any known checkpoint wrapper and return a flat state_dict.
+
+    Handles (in priority order):
+      • {'model_state_dict': {...}}   — common PyTorch training saves
+      • {'model': {...}}              — some frameworks use this key
+      • {'state_dict': {...}}         — Lightning / OpenCLIP full checkpoints
+      • raw dict with param names     — already a flat state_dict
+    Then strips DataParallel 'module.' prefix if present on every key.
+    """
+    for wrapper_key in ("model_state_dict", "model", "state_dict"):
+        if wrapper_key in raw and isinstance(raw[wrapper_key], dict):
+            raw = raw[wrapper_key]
+            break
+
+    # Strip DataParallel prefix
+    if raw and all(k.startswith("module.") for k in raw):
+        raw = {k[len("module."):]: v for k, v in raw.items()}
+
+    return raw
+
+
+def load_clip_weights(device: str):
+    """
+    Build CLIP ViT-B/32 and attempt to load best_clip_model.pt.
+
+    Strategy:
+      1. Always create architecture + preprocess via pretrained='openai'.
+         This guarantees the preprocess transforms are identical to those used
+         when building embeddings.npy — weights can change, transforms cannot.
+      2. Try to load best_clip_model.pt and overwrite model weights.
+         Uses strict=False so minor key mismatches (logit_scale, etc.) don't crash.
+      3. On ANY failure (missing file, shape mismatch, corrupt checkpoint):
+         fall back to OpenAI pretrained weights and log clearly.
+
+    Returns: (model, preprocess, used_finetuned: bool)
+    """
+    mdl, _, preprocess = open_clip.create_model_and_transforms(
+        "ViT-B-32", pretrained="openai"
+    )
+
+    used_finetuned = False
+
+    if os.path.exists(FINETUNED_CKPT):
+        try:
+            raw = torch.load(FINETUNED_CKPT, map_location="cpu")
+
+            if not isinstance(raw, dict):
+                raise TypeError(f"Checkpoint is {type(raw)}, expected dict.")
+
+            state_dict = _extract_state_dict(raw)
+            missing, unexpected = mdl.load_state_dict(state_dict, strict=False)
+
+            if missing:
+                n = len(missing)
+                preview = missing[:4]
+                print(f"[CLIP]  Keys missing  ({n}): {preview}{'…' if n > 4 else ''}")
+            if unexpected:
+                n = len(unexpected)
+                preview = unexpected[:4]
+                print(f"[CLIP]  Keys extra    ({n}): {preview}{'…' if n > 4 else ''}")
+
+            used_finetuned = True
+            print(f"[CLIP]  ✅  Fine-tuned weights loaded — {FINETUNED_CKPT}")
+
+        except Exception as exc:
+            print(f"[CLIP]  ⚠️  Could not load {FINETUNED_CKPT}: {exc}")
+            print("[CLIP]  ↩️  Falling back to OpenAI pretrained weights.")
+    else:
+        print(f"[CLIP]  ℹ️  {FINETUNED_CKPT} not found — using OpenAI pretrained weights.")
+
+    if not used_finetuned:
+        print("[CLIP]  ✅  OpenAI pretrained weights active.")
+
+    mdl = mdl.to(device).eval()
+    return mdl, preprocess, used_finetuned
+
+
+# =========================================================
 # MODELS + DATA
 # =========================================================
 
 @st.cache_resource
 def load_clip_model():
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    mdl, _, preprocess = open_clip.create_model_and_transforms("ViT-B-32", pretrained="openai")
-    mdl = mdl.to(device).eval()
+    mdl, preprocess, _ = load_clip_weights(device)
     return mdl, preprocess, device
+
 
 @st.cache_resource
 def load_fashion_yolo():
     # ✅ Your friend's trained model — NOT the generic COCO yolov8n.pt
     return YOLO("best_deepfashion_yolo.pt")
+
 
 @st.cache_data
 def load_data():
@@ -465,6 +552,7 @@ def load_data():
     gembs = embs[gdf["embedding_index"].values].astype("float32")
     return embs, gdf, gembs
 
+
 @st.cache_resource
 def build_faiss_index(gembs):
     idx = faiss.IndexHNSWFlat(gembs.shape[1], 32)
@@ -472,6 +560,7 @@ def build_faiss_index(gembs):
     idx.hnsw.efSearch = 64
     idx.add(gembs)
     return idx
+
 
 @st.cache_data
 def build_category_subsets(gdf):
@@ -481,20 +570,21 @@ def build_category_subsets(gdf):
             subsets[cat] = gdf[gdf["crop_class"] == cat].index.tolist()
     return subsets
 
+
 clip_model, preprocess, device = load_clip_model()
-fashion_yolo  = load_fashion_yolo()
+fashion_yolo     = load_fashion_yolo()
 embeddings, gallery_df, gallery_embeddings = load_data()
-gallery_index  = build_faiss_index(gallery_embeddings)
+gallery_index    = build_faiss_index(gallery_embeddings)
 category_subsets = build_category_subsets(gallery_df)
 
 # =========================================================
 # CONSTANTS
 # =========================================================
 
-CONF_THRESHOLD = 0.25
+CONF_THRESHOLD  = 0.25
 FASHION_CLASSES = {"upper_body", "lower_body", "full_body"}
 
-REGION_ICON = {"upper_body": "↑", "lower_body": "↓", "full_body": "↕"}
+REGION_ICON  = {"upper_body": "↑", "lower_body": "↓", "full_body": "↕"}
 REGION_LABEL = {"upper_body": "Upper Body", "lower_body": "Lower Body", "full_body": "Full Body"}
 
 # =========================================================
@@ -529,17 +619,15 @@ def encode_image(image: Image.Image, use_fusion: bool = True) -> np.ndarray:
 
 def run_detection(image: Image.Image, forced_cls=None):
     """
-    Run best_deepfashion_yolo.pt (your friend's trained model) on the image.
+    Run best_deepfashion_yolo.pt on the image.
 
-    Class mapping the model outputs:
+    Class mapping:
         0 -> 'upper_body'
         1 -> 'lower_body'
         2 -> 'full_body'
 
-    Args:
-        forced_cls: if not None (e.g. 'upper_body'), return ONLY detections of
-                    that class. If none found, returns [] so the UI can warn —
-                    NO silent fallback to a different class.
+    forced_cls: if set, return ONLY that class. If none found, returns []
+                so the UI can warn — NO silent fallback to a different class.
 
     Returns list of dicts: { cls, conf, bbox, crop }
     """
@@ -552,7 +640,6 @@ def run_detection(image: Image.Image, forced_cls=None):
         for box in boxes:
             conf     = float(box.conf[0])
             cls_id   = int(box.cls[0])
-            # Reads directly from the model's own name dict — correct for any .pt
             cls_name = fashion_yolo.names.get(cls_id, "")
 
             if conf < CONF_THRESHOLD or cls_name not in FASHION_CLASSES:
@@ -573,7 +660,6 @@ def run_detection(image: Image.Image, forced_cls=None):
     detections.sort(key=lambda d: d["conf"], reverse=True)
 
     if forced_cls is not None:
-        # Forced mode — only the requested class, no fallback
         return [d for d in detections if d["cls"] == forced_cls]
 
     # Auto mode — best detection per class, up to 3
@@ -668,7 +754,6 @@ uploaded_file = st.file_uploader(
 if uploaded_file is not None:
     query_image = Image.open(uploaded_file).convert("RGB")
 
-    # ── Show query image + pipeline badges ──
     col_q, col_p = st.columns([1, 2], gap="large")
 
     with col_q:
@@ -714,7 +799,6 @@ if uploaded_file is not None:
     mode_label = f"{query_mode} · best_deepfashion_yolo.pt"
     st.markdown(f'<div class="divider-label"><span>{mode_label}</span></div>', unsafe_allow_html=True)
 
-    # forced_cls is None for Auto, or e.g. 'upper_body' for forced modes
     forced_cls = MODE_CLASS.get(query_mode)
 
     with st.spinner("Running best_deepfashion_yolo.pt…"):
@@ -740,11 +824,10 @@ if uploaded_file is not None:
         st.stop()
 
     else:
-        # ── Show all detected regions as selectable cards ──
         n = len(detections)
         det_cols = st.columns(n, gap="large")
 
-        # Init session state for selected region (default: first/best detection)
+        # Reset selection when file or mode changes
         if (
             "selected_cls" not in st.session_state
             or st.session_state.get("_last_file") != uploaded_file.name
@@ -764,7 +847,6 @@ if uploaded_file is not None:
             is_selected = (st.session_state.selected_cls == cls)
 
             with det_cols[i]:
-                # Card header
                 selected_marker = " ✦ SELECTED" if is_selected else ""
                 st.markdown(f"""
                 <div class="region-card {'selected' if is_selected else ''}">
@@ -775,10 +857,8 @@ if uploaded_file is not None:
                 </div>
                 """, unsafe_allow_html=True)
 
-                # Crop image
                 st.image(crop, use_container_width=True)
 
-                # Select button — only show if not already selected
                 btn_label = "✦ Selected" if is_selected else f"Retrieve {lbl}"
                 if st.button(
                     btn_label,
@@ -790,11 +870,9 @@ if uploaded_file is not None:
                     st.session_state.selected_crop = crop
                     st.rerun()
 
-        # Use whatever is in session state
         selected_cls  = st.session_state.selected_cls
         selected_crop = st.session_state.selected_crop
 
-        # Show selection summary
         icon = REGION_ICON.get(selected_cls, "↕")
         lbl  = REGION_LABEL.get(selected_cls, selected_cls)
         mode_note = (
