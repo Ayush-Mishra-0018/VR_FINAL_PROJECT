@@ -406,9 +406,9 @@ with st.sidebar:
 
     st.markdown('<div class="sb-section-title">Eval Metrics</div>', unsafe_allow_html=True)
     for label, val in [
-        ("Recall@5","41.0%"), ("Recall@10","46.4%"), ("Recall@15","49.1%"),
-        ("mAP@5","11.6%"),    ("mAP@10","12.3%"),    ("mAP@15","12.6%"),
-        ("NDCG@5","18.8%"),   ("NDCG@10","18.7%"),   ("NDCG@15","19.2%"),
+        ("Recall@5","76.79%"), ("Recall@10","80.68%"), ("Recall@15","83.31%"),
+        ("mAP@5","42.91%"),    ("mAP@10","41.67%"),    ("mAP@15","41.91%"),
+        ("NDCG@5","50.80%"),   ("NDCG@10","51.03%"),   ("NDCG@15","52.13%"),
     ]:
         st.markdown(f"""
         <div class="metric-row">
