@@ -581,7 +581,7 @@ category_subsets = build_category_subsets(gallery_df)
 # CONSTANTS
 # =========================================================
 
-CONF_THRESHOLD  = 0.25
+CONF_THRESHOLD  = 0.10
 FASHION_CLASSES = {"upper_body", "lower_body", "full_body"}
 
 REGION_ICON  = {"upper_body": "↑", "lower_body": "↓", "full_body": "↕"}
@@ -667,7 +667,8 @@ def run_detection(image: Image.Image, forced_cls=None):
     detections.sort(key=lambda d: d["conf"], reverse=True)
 
     if forced_cls is not None:
-        return [d for d in detections if d["cls"] == forced_cls]
+        matching = [d for d in detections if d["cls"] == forced_cls]
+        return matching[:1] if matching else []
 
     # Auto mode — best detection per class, up to 3
     seen_classes, unique = set(), []
