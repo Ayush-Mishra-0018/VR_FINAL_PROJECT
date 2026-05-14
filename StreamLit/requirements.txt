@@ -6,4 +6,5 @@ pillow
 streamlit
 torch
 torchvision
+transformers
 ultralytics

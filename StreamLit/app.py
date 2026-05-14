@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import open_clip
-from ultralytics import YOLO
+from transformers import AutoImageProcessor, AutoModelForObjectDetection
 from PIL import Image, ImageEnhance
 
 # =========================================================
@@ -538,9 +538,10 @@ def load_clip_model():
 
 
 @st.cache_resource
-def load_fashion_yolo():
-    # ✅ Your friend's trained model — NOT the generic COCO yolov8n.pt
-    return YOLO("best_deepfashion_yolo.pt")
+def load_yolos_model():
+    processor = AutoImageProcessor.from_pretrained("valentinafevu/yolos-fashionpedia")
+    model = AutoModelForObjectDetection.from_pretrained("valentinafevu/yolos-fashionpedia")
+    return processor, model
 
 
 @st.cache_data
@@ -572,7 +573,7 @@ def build_category_subsets(gdf):
 
 
 clip_model, preprocess, device = load_clip_model()
-fashion_yolo     = load_fashion_yolo()
+yolos_processor, yolos_model = load_yolos_model()
 embeddings, gallery_df, gallery_embeddings = load_data()
 gallery_index    = build_faiss_index(gallery_embeddings)
 category_subsets = build_category_subsets(gallery_df)
@@ -626,43 +627,54 @@ def encode_image(image: Image.Image, use_fusion: bool = True) -> np.ndarray:
 
 def run_detection(image: Image.Image, forced_cls=None):
     """
-    Run best_deepfashion_yolo.pt on the image.
+    Run yolos-fashionpedia on the image.
 
-    Class mapping:
-        0 -> 'upper_body'
-        1 -> 'lower_body'
-        2 -> 'full_body'
+    Maps fine-grained Fashionpedia classes to:
+        'upper_body', 'lower_body', 'full_body'
 
     forced_cls: if set, return ONLY that class. If none found, returns []
                 so the UI can warn — NO silent fallback to a different class.
 
     Returns list of dicts: { cls, conf, bbox, crop }
     """
-    results  = fashion_yolo(image)
-    boxes    = results[0].boxes
-    iw, ih   = image.size
+    inputs = yolos_processor(images=image, return_tensors="pt")
+    outputs = yolos_model(**inputs)
+    target_sizes = torch.tensor([image.size[::-1]])
+    results = yolos_processor.post_process_object_detection(outputs, threshold=CONF_THRESHOLD, target_sizes=target_sizes)[0]
 
+    upper_body_labels = {'shirt, blouse', 'top, t-shirt, sweatshirt', 'sweater', 'cardigan', 'jacket', 'vest', 'coat'}
+    lower_body_labels = {'pants', 'shorts', 'skirt'}
+    full_body_labels = {'dress', 'jumpsuit', 'cape'}
+
+    iw, ih = image.size
     detections = []
-    if boxes is not None:
-        for box in boxes:
-            conf     = float(box.conf[0])
-            cls_id   = int(box.cls[0])
-            cls_name = fashion_yolo.names.get(cls_id, "")
+    
+    for score, label_id, box in zip(results["scores"], results["labels"], results["boxes"]):
+        conf = score.item()
+        label_name = yolos_model.config.id2label[label_id.item()]
+        
+        mapped_cls = None
+        if label_name in upper_body_labels:
+            mapped_cls = "upper_body"
+        elif label_name in lower_body_labels:
+            mapped_cls = "lower_body"
+        elif label_name in full_body_labels:
+            mapped_cls = "full_body"
+            
+        if mapped_cls is None:
+            continue
+            
+        x1, y1, x2, y2 = box.tolist()
+        x1, y1 = max(0, int(x1)), max(0, int(y1))
+        x2, y2 = min(iw, int(x2)), min(ih, int(y2))
 
-            if conf < CONF_THRESHOLD or cls_name not in FASHION_CLASSES:
-                continue
-
-            x1, y1, x2, y2 = box.xyxy[0].tolist()
-            x1, y1 = max(0, int(x1)), max(0, int(y1))
-            x2, y2 = min(iw, int(x2)), min(ih, int(y2))
-
-            crop = image.crop((x1, y1, x2, y2))
-            detections.append({
-                "cls":  cls_name,
-                "conf": conf,
-                "bbox": [x1, y1, x2, y2],
-                "crop": crop,
-            })
+        crop = image.crop((x1, y1, x2, y2))
+        detections.append({
+            "cls":  mapped_cls,
+            "conf": conf,
+            "bbox": [x1, y1, x2, y2],
+            "crop": crop,
+        })
 
     detections.sort(key=lambda d: d["conf"], reverse=True)
 
