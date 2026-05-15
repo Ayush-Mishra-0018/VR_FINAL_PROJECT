@@ -441,7 +441,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =========================================================
-# CLIP CHECKPOINT LOADER  (shared helper — also used by batch_eval.py)
+# CLIP CHECKPOINT LOADER 
 # =========================================================
 
 FINETUNED_CKPT = "best_clip_model.pt"
@@ -993,8 +993,6 @@ if uploaded_file is not None:
                 img_path   = os.path.join("cropped_products", crop_class, filename)
 
                 # --- Gallery Path Verification ---
-                # Ensuring runtime folder structure matches expectation:
-                # cropped_products/upper_body/, etc.
                 if not os.path.exists(img_path):
                     st.warning(f"Warning: Image missing at path {img_path}. Verify cropped_products directory.")
                     continue
